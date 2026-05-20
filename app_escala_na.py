@@ -6,6 +6,7 @@ import streamlit as st
 # =============================
 st.set_page_config(page_title="Escala de Ministérios", layout="wide")
 
+# CSS: melhor para celular + layout
 st.markdown(
     """
     <style>
@@ -28,6 +29,7 @@ csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTtu-b1fJg3AaYjKpcmYv
 # =============================
 @st.cache_data(ttl=300)
 def carregar_dados(url: str) -> pd.DataFrame:
+    # header=1 porque seu CSV tem a linha do cabeçalho na segunda linha
     df = pd.read_csv(url, header=1)
     df.columns = df.columns.str.strip()
 
@@ -37,7 +39,7 @@ def carregar_dados(url: str) -> pd.DataFrame:
     # Colunas de ministérios = tudo menos "Data"
     ministerios_cols = [c for c in df.columns if c != "Data"]
 
-    # Transformar "wide" -> "long"
+    # Wide -> Long
     melted = df.melt(
         id_vars=["Data"],
         value_vars=ministerios_cols,
@@ -48,14 +50,19 @@ def carregar_dados(url: str) -> pd.DataFrame:
     # Remover vazios
     melted = melted.dropna(subset=["Nome"])
 
-    # Suportar múltiplos nomes por célula: " e " e "," (e também ";" por segurança)
+    # Suportar múltiplos nomes por célula:
+    # "João e Maria" ou "João, Maria" (e também ";" como bônus)
     melted["Nome"] = melted["Nome"].astype(str)
-    melted["Nome"] = melted["Nome"].str.replace(" e ", ",", regex=False)
+    melted["Nome"] = melted["Nome"].str.replace(r"\s+[eE]\s+", ",", regex=True)
     melted["Nome"] = melted["Nome"].str.replace(";", ",", regex=False)
+
+    # Split por vírgula e explode
     melted["Nome"] = melted["Nome"].str.split(",")
     melted = melted.explode("Nome")
     melted["Nome"] = melted["Nome"].str.strip()
     melted = melted[melted["Nome"] != ""]
+
+    # Padroniza nomes (evita JOAO/Joao/joao)
     melted["Nome"] = melted["Nome"].str.title()
 
     # Ano e mês
@@ -67,14 +74,14 @@ def carregar_dados(url: str) -> pd.DataFrame:
 df_melted = carregar_dados(csv_url)
 
 # =============================
-# CORES POR MINISTÉRIO
+# CORES POR MINISTÉRIO (tabela detalhada)
 # =============================
 MINISTERIO_CORES = {
-    "Animação": "#E3F2FD",
-    "Condução": "#E8F5E9",
-    "Dança": "#FCE4EC",
-    "Pregação": "#FFF3E0",
-    "Comunicação": "#F3E5F5",
+    "Animação": "#E3F2FD",      # azul claro
+    "Condução": "#E8F5E9",      # verde claro
+    "Dança": "#FCE4EC",         # rosa claro
+    "Pregação": "#FFF3E0",      # laranja claro
+    "Comunicação": "#F3E5F5",   # roxo claro
 }
 
 def estilo_por_ministerio(row):
@@ -91,67 +98,80 @@ def criar_styler(df_exibicao: pd.DataFrame):
             {"selector": "table", "props": [("width", "100%")]},
         ])
     )
-
-    # Esconder índice
+    # Esconder índice (compatível com versões diferentes)
     try:
         styler = styler.hide(axis="index")
     except Exception:
         styler = styler.hide_index()
-
     return styler
 
+def safe_dataframe(data, **kwargs):
+    """Compatibilidade: hide_index pode não existir em versões antigas."""
+    try:
+        st.dataframe(data, **kwargs)
+    except TypeError:
+        kwargs.pop("hide_index", None)
+        st.dataframe(data, **kwargs)
+
 # =============================
-# FUNÇÕES DE "GRUPOS" (por Data)
+# RESUMO DE GRUPOS (por Data) COM SERVOS POR MINISTÉRIO
 # =============================
-def montar_grupos_por_data(df: pd.DataFrame) -> pd.DataFrame:
-    # Agrupa por Data e junta Ministérios e Servos (sem repetir)
-    grupos = (
-        df.groupby("Data")
-        .agg(
-            Ministerios=("Ministerio", lambda s: " | ".join(sorted(set(map(str, s))))),
-            Servos=("Nome", lambda s: ", ".join(sorted(set(map(str, s)))))
-        )
-        .reset_index()
-        .sort_values("Data")
-    )
-    # Data no formato BR para exibição
-    grupos["Data"] = grupos["Data"].dt.strftime("%d/%m/%Y")
-    return grupos
-
-def filtrar_grupos(grupos_df: pd.DataFrame, df_original: pd.DataFrame):
+def montar_resumo_grupos(df_long: pd.DataFrame) -> pd.DataFrame:
     """
-    grupos_df tem Data como string formatada.
-    df_original tem Data como datetime.
-    Vamos usar df_original pra comparar datas e depois mapear para grupos_df.
+    Retorna um DF com:
+      Data_dt (datetime)
+      Data (string DD/MM/AAAA)
+      Ministérios (lista única)
+      Servos (texto com 'Ministério: nomes')
     """
-    # Datas únicas ordenadas (datetime)
-    datas_ordenadas = sorted(df_original["Data"].dropna().dt.normalize().unique())
+    df_ok = df_long.dropna(subset=["Data"]).copy()
+    df_ok["Data_dt"] = df_ok["Data"].dt.normalize()
 
-    hoje = pd.Timestamp.today().normalize()
+    rows = []
+    for data_dt, g in df_ok.groupby("Data_dt"):
+        # ministérios do dia
+        ministerios = " | ".join(sorted(set(g["Ministerio"].astype(str))))
 
-    proximas = [d for d in datas_ordenadas if d >= hoje]
-    passadas = [d for d in datas_ordenadas if d < hoje]
+        # servos vinculados ao ministério certinho
+        linhas = []
+        for m, sub in g.groupby("Ministerio"):
+            servos = ", ".join(sorted(set(sub["Nome"].astype(str))))
+            linhas.append(f"{m}: {servos}")
 
-    # Converte datetime -> string dd/mm/yyyy para filtrar em grupos_df
-    prox_str = [pd.to_datetime(d).strftime("%d/%m/%Y") for d in proximas]
-    past_str = [pd.to_datetime(d).strftime("%d/%m/%Y") for d in passadas]
+        servos_map = "\n".join(linhas)
 
-    proximo_grupo = grupos_df[grupos_df["Data"].isin(prox_str[:1])]
-    proximos_3 = grupos_df[grupos_df["Data"].isin(prox_str[:3])]
-    ultimos_5 = grupos_df[grupos_df["Data"].isin(past_str[-5:])]
+        rows.append({
+            "Data_dt": data_dt,
+            "Data": pd.to_datetime(data_dt).strftime("%d/%m/%Y"),
+            "Ministérios": ministerios,
+            "Servos": servos_map
+        })
 
-    return proximo_grupo, proximos_3, ultimos_5
+    return pd.DataFrame(rows).sort_values("Data_dt")
+
+def separar_proximos_ultimos(resumo: pd.DataFrame):
+    hoje = pd.Timestamp.now().normalize()
+
+    futuros = resumo[resumo["Data_dt"] >= hoje].sort_values("Data_dt")
+    passados = resumo[resumo["Data_dt"] < hoje].sort_values("Data_dt")
+
+    proximo = futuros.head(1)
+    proximos3 = futuros.head(3)
+    ultimos5 = passados.tail(5)
+
+    # Só colunas pedidas
+    cols = ["Data", "Ministérios", "Servos"]
+    return proximo[cols], proximos3[cols], ultimos5[cols]
 
 # =============================
 # UI
 # =============================
 st.title("📅 Escala de Ministérios")
 
-# Legenda
-with st.expander("🎨 Legenda de cores por ministério", expanded=False):
+# Legenda de cores (para o detalhado)
+with st.expander("🎨 Legenda de cores por ministério (tabela detalhada)", expanded=False):
     cols = st.columns(3)
-    items = list(MINISTERIO_CORES.items())
-    for i, (m, cor) in enumerate(items):
+    for i, (m, cor) in enumerate(MINISTERIO_CORES.items()):
         with cols[i % 3]:
             st.markdown(
                 f"""
@@ -164,33 +184,33 @@ with st.expander("🎨 Legenda de cores por ministério", expanded=False):
             )
 
 # =============================
-# TELA INICIAL: PRÓXIMOS / ÚLTIMOS GRUPOS
+# BLOCO INICIAL (como você pediu)
 # =============================
-grupos = montar_grupos_por_data(df_melted)
-proximo_grupo, proximos_3, ultimos_5 = filtrar_grupos(grupos, df_melted)
+resumo = montar_resumo_grupos(df_melted)
+proximo_df, proximos3_df, ultimos5_df = separar_proximos_ultimos(resumo)
 
 st.subheader("➡️ Próximo Grupo")
-if proximo_grupo.empty:
-    st.info("Não encontrei grupos futuros a partir de hoje.")
+if proximo_df.empty:
+    st.info("Não encontrei um próximo grupo (nenhuma data futura a partir de hoje).")
 else:
-    st.dataframe(proximo_grupo[["Data", "Ministerios", "Servos"]], hide_index=True, use_container_width=True)
+    safe_dataframe(proximo_df, hide_index=True, use_container_width=True)
 
 st.subheader("⏭️ Próximos 3 Grupos")
-if proximos_3.empty:
-    st.info("Não encontrei próximos grupos a partir de hoje.")
+if proximos3_df.empty:
+    st.info("Não encontrei próximos grupos (nenhuma data futura a partir de hoje).")
 else:
-    st.dataframe(proximos_3[["Data", "Ministerios", "Servos"]], hide_index=True, use_container_width=True)
+    safe_dataframe(proximos3_df, hide_index=True, use_container_width=True)
 
 st.subheader("⬅️ Últimos 5 Grupos")
-if ultimos_5.empty:
-    st.info("Não encontrei grupos anteriores a hoje.")
+if ultimos5_df.empty:
+    st.info("Não encontrei grupos anteriores (nenhuma data antes de hoje).")
 else:
-    st.dataframe(ultimos_5[["Data", "Ministerios", "Servos"]], hide_index=True, use_container_width=True)
+    safe_dataframe(ultimos5_df, hide_index=True, use_container_width=True)
 
 st.divider()
 
 # =============================
-# FILTROS (com "Todos")
+# FILTROS (mantendo como estava, com "Todos")
 # =============================
 st.subheader("🔎 Filtros")
 
@@ -230,39 +250,46 @@ if nome:
 df_filtrado = df_filtrado.sort_values(by="Data")
 
 # =============================
-# TABELA DETALHADA COM CORES
+# TABELA DETALHADA COM CORES (mantendo como estava)
 # =============================
 st.subheader("📋 Escalas (detalhado)")
 
 df_exib = df_filtrado[["Data", "Nome", "Ministerio"]].copy()
 df_exib["Data"] = df_exib["Data"].dt.strftime("%d/%m/%Y")
 
-st.dataframe(
+safe_dataframe(
     criar_styler(df_exib),
     use_container_width=True
 )
 
 # =============================
-# CONTAGEM
+# CONTAGEM (mantendo)
 # =============================
 st.subheader("📊 Quantas vezes cada pessoa atuou (no filtro atual)")
 
-contagem = df_filtrado.groupby("Nome").size().reset_index(name="Quantidade").sort_values("Quantidade", ascending=False)
-st.dataframe(contagem, hide_index=True, use_container_width=True)
+contagem = (
+    df_filtrado.groupby("Nome")
+    .size()
+    .reset_index(name="Quantidade")
+    .sort_values("Quantidade", ascending=False)
+)
+
+safe_dataframe(contagem, hide_index=True, use_container_width=True)
 
 if not contagem.empty:
     st.bar_chart(contagem.set_index("Nome"))
 
 # =============================
-# AGENDA INDIVIDUAL
+# AGENDA INDIVIDUAL (mantendo)
 # =============================
 if nome:
     st.subheader(f"📆 Agenda completa de {nome}")
+
     agenda = df_melted[df_melted["Nome"].str.contains(nome, case=False, na=False)].sort_values(by="Data")
     agenda_exib = agenda[["Data", "Nome", "Ministerio"]].copy()
     agenda_exib["Data"] = agenda_exib["Data"].dt.strftime("%d/%m/%Y")
 
-    st.dataframe(
+    safe_dataframe(
         criar_styler(agenda_exib),
         use_container_width=True
     )
