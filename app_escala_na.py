@@ -11,19 +11,10 @@ st.set_page_config(
 )
 
 # =========================================================
-# CSS
+# CSS (visual simples e responsivo)
 # =========================================================
 st.markdown("""
 <style>
-
-.main {
-    padding-top: 1rem;
-}
-
-.block-container {
-    padding-top: 1rem;
-}
-
 .card {
     border: 1px solid #31333F;
     border-radius: 16px;
@@ -31,310 +22,313 @@ st.markdown("""
     margin-bottom: 15px;
     background-color: #0E1117;
 }
-
 .ministerio {
-    font-size: 1.4rem;
+    font-size: 1.3rem;
     font-weight: bold;
     margin-bottom: 10px;
 }
-
 .nome {
     font-size: 1.05rem;
     margin-left: 10px;
-    margin-bottom: 5px;
+    margin-bottom: 6px;
 }
-
 .data-box {
     background: linear-gradient(90deg, #1f2937, #111827);
-    padding: 20px;
+    padding: 16px 18px;
     border-radius: 18px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
     border: 1px solid #374151;
 }
-
 @media (max-width: 768px) {
-
-    .block-container {
-        padding-left: 1rem;
-        padding-right: 1rem;
-    }
-
-    h1 {
-        font-size: 1.6rem !important;
-    }
+    .block-container { padding-left: 1rem; padding-right: 1rem; }
+    h1 { font-size: 1.6rem !important; }
 }
-
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================
-# CSV URL
+# CONSTANTES
 # =========================================================
-csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTtu-b1fJg3AaYjKpcmYvdB1AaZpWGTRPr76mBxyBczreE69_A_3_NLJ4OPuGMtefWyTzl56G0oklFo/pub?output=csv"
+CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTtu-b1fJg3AaYjKpcmYvdB1AaZpWGTRPr76mBxyBczreE69_A_3_NLJ4OPuGMtefWyTzl56G0oklFo/pub?output=csv"
+
+MESES = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+
+EMOJIS = {
+    "Animação": "🎵",
+    "Condução": "🎤",
+    "Dança": "💃",
+    "Pregação": "🔨",
+    "Comunicação": "📸",
+    "Música": "🎸"
+}
+
+ORDEM_PADRAO = ["Animação", "Condução", "Dança", "Pregação", "Comunicação", "Música"]
+
+def ordenar_ministerios(cols_encontradas):
+    """Mantém ordem padrão e adiciona qualquer outro ministério existente na planilha."""
+    cols = []
+    for m in ORDEM_PADRAO:
+        if m in cols_encontradas:
+            cols.append(m)
+    extras = [c for c in cols_encontradas if c not in cols]
+    return cols + extras
 
 # =========================================================
-# LOAD DATA
+# LOAD DATA (raw = formato original / long = para filtros e contagem)
 # =========================================================
-@st.cache_data(ttl=300)
-def carregar_dados():
+@st.cache_data(ttl=60)
+def carregar_dados(url: str):
+    df_raw = pd.read_csv(url, header=1)
+    df_raw.columns = df_raw.columns.str.strip()
 
-    df = pd.read_csv(csv_url, header=1)
+    # renomeia coluna de data para "data"
+    if "Data" in df_raw.columns:
+        df_raw = df_raw.rename(columns={"Data": "data"})
 
-    df.columns = df.columns.str.strip()
+    df_raw["data"] = pd.to_datetime(df_raw["data"], dayfirst=True, errors="coerce")
+    df_raw = df_raw.dropna(subset=["data"]).copy()
 
-    df.rename(columns={"Data": "data"}, inplace=True)
+    ministerios_cols = [c for c in df_raw.columns if c != "data"]
+    ministerios_cols = ordenar_ministerios(ministerios_cols)
 
-    df["data"] = pd.to_datetime(
-        df["data"],
-        dayfirst=True,
-        errors="coerce"
-    )
-
-    df = df.dropna(subset=["data"])
-
-    ministerios_cols = [c for c in df.columns if c != "data"]
-
-    melted = df.melt(
+    # LONG: explode nomes para contagem e busca
+    df_long = df_raw.melt(
         id_vars=["data"],
         value_vars=ministerios_cols,
         var_name="ministerio",
         value_name="nome"
     )
 
-    melted = melted.dropna(subset=["nome"])
+    df_long = df_long.dropna(subset=["nome"]).copy()
+    df_long["nome"] = df_long["nome"].astype(str)
 
-    melted["nome"] = melted["nome"].astype(str)
+    # separadores: " e ", "," e ";"
+    df_long["nome"] = df_long["nome"].str.replace(r"\s+[eE]\s+", ",", regex=True)
+    df_long["nome"] = df_long["nome"].str.replace(";", ",", regex=False)
+    df_long["nome"] = df_long["nome"].str.split(",")
+    df_long = df_long.explode("nome")
 
-    melted["nome"] = melted["nome"].str.replace(
-        r"\s+[eE]\s+",
-        ",",
-        regex=True
-    )
+    df_long["nome"] = df_long["nome"].str.strip()
+    df_long = df_long[df_long["nome"] != ""]
+    df_long["nome"] = df_long["nome"].str.title()
 
-    melted["nome"] = melted["nome"].str.replace(";", ",", regex=False)
+    df_long["ano"] = df_long["data"].dt.year
+    df_long["mes"] = df_long["data"].dt.month
 
-    melted["nome"] = melted["nome"].str.split(",")
-    melted = melted.explode("nome")
+    return df_raw, df_long, ministerios_cols
 
-    melted["nome"] = melted["nome"].str.strip()
-    melted = melted[melted["nome"] != ""]
-    melted["nome"] = melted["nome"].str.title()
-
-    melted["ano"] = melted["data"].dt.year
-    melted["mes"] = melted["data"].dt.strftime("%m")
-
-    return melted
-
-df = carregar_dados()
+df_raw, df_long, ministerios_cols = carregar_dados(CSV_URL)
 
 # =========================================================
-# TITLE
+# SIDEBAR - MENU + FILTROS
+# =========================================================
+st.sidebar.title("📋 Menu")
+
+pagina = st.sidebar.radio(
+    "Ir para:",
+    ["🔥 Escala", "🗂️ Tabela Original", "📊 Participações"],
+    index=0
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔎 Filtros")
+
+# Ano (padrão 2026)
+anos = sorted(df_long["ano"].dropna().unique().tolist())
+idx_ano = anos.index(2026) if 2026 in anos else 0
+ano = st.sidebar.selectbox("Ano", anos, index=idx_ano)
+
+# Mês (Mostra nome, mas retorna número) usando format_func [1](https://docs.streamlit.io/develop/api-reference/widgets/st.selectbox)
+meses_disponiveis = sorted(df_long[df_long["ano"] == ano]["mes"].dropna().unique().tolist())
+opcoes_mes = [0] + meses_disponiveis  # 0 = "Todos"
+mes_num = st.sidebar.selectbox(
+    "Mês",
+    opcoes_mes,
+    index=0,
+    format_func=lambda x: "Todos" if x == 0 else MESES.get(x, str(x))
+)
+
+# Data (opcional) - aparece sempre na lateral e pode ficar vazia (None) [2](https://docs.streamlit.io/develop/api-reference/widgets/st.date_input)
+data_escolhida = st.sidebar.date_input(
+    "Data (opcional)",
+    value=None,              # permite vazio
+    format="DD/MM/YYYY"      # mostra no formato BR
+)
+
+# Ministério
+ministerio = st.sidebar.selectbox(
+    "Ministério",
+    ["Todos"] + ordenar_ministerios(sorted(df_long["ministerio"].unique().tolist())),
+    index=0
+)
+
+# Nome
+nome = st.sidebar.text_input("Nome (opcional)")
+
+# =========================================================
+# APLICAR FILTROS (no LONG)
+# =========================================================
+df_f = df_long[df_long["ano"] == ano].copy()
+
+if mes_num != 0:
+    df_f = df_f[df_f["mes"] == mes_num]
+
+if data_escolhida is not None:
+    df_f = df_f[df_f["data"].dt.date == data_escolhida]
+
+if ministerio != "Todos":
+    df_f = df_f[df_f["ministerio"] == ministerio]
+
+if nome:
+    df_f = df_f[df_f["nome"].str.contains(nome, case=False, na=False)]
+
+# =========================================================
+# TITULO
 # =========================================================
 st.title("📅 Escala de Ministérios")
 
 # =========================================================
-# PRÓXIMO GRUPO
+# PAGINA: ESCALA
 # =========================================================
-st.subheader("🔥 Próximo Grupo")
+if pagina == "🔥 Escala":
 
-hoje = pd.Timestamp.now().normalize()
+    st.header("🔥 Escala do Grupo")
 
-proximos = df[df["data"] >= hoje].sort_values("data")
+    tipo = st.selectbox(
+        "Mostrar:",
+        ["Próximo Grupo", "Próximos", "Anteriores"],
+        index=0
+    )
 
-if proximos.empty:
+    qtd = 1
+    if tipo in ["Próximos", "Anteriores"]:
+        qtd = st.number_input("Quantidade de grupos", min_value=1, max_value=20, value=3, step=1)
 
-    st.warning("Nenhum próximo grupo encontrado.")
+    hoje = pd.Timestamp.now().normalize()
 
-else:
+    if tipo == "Próximo Grupo":
+        dados = df_f[df_f["data"] >= hoje].sort_values("data")
+        datas = dados["data"].drop_duplicates().head(1)
 
-    proxima_data = proximos.iloc[0]["data"]
+    elif tipo == "Próximos":
+        dados = df_f[df_f["data"] >= hoje].sort_values("data")
+        datas = dados["data"].drop_duplicates().head(int(qtd))
 
-    grupo = proximos[proximos["data"] == proxima_data]
+    else:  # Anteriores
+        dados = df_f[df_f["data"] < hoje].sort_values("data", ascending=False)
+        datas = dados["data"].drop_duplicates().head(int(qtd))
 
-    st.markdown(f"""
-    <div class="data-box">
-        <h2>📆 {proxima_data.strftime('%d/%m/%Y')}</h2>
-    </div>
-    """, unsafe_allow_html=True)
+    if datas.empty:
+        st.warning("Nenhum grupo encontrado com os filtros atuais.")
+    else:
+        ordem = ordenar_ministerios(ministerios_cols)
 
-    emojis = {
-        "Animação": "🎵",
-        "Condução": "🎤",
-        "Dança": "💃",
-        "Pregação": "🔨",
-        "Comunicação": "📸",
-        "Música": "🎸"
-    }
-
-    ordem = [
-        "Animação",
-        "Condução",
-        "Dança",
-        "Pregação",
-        "Comunicação",
-        "Música"
-    ]
-
-    cols = st.columns(2)
-
-    idx = 0
-
-    for ministerio in ordem:
-
-        sub = grupo[grupo["ministerio"] == ministerio]
-
-        emoji = emojis.get(ministerio, "✨")
-
-        # 🔥 AQUI FOI O AJUSTE
-        if sub.empty:
-            nomes = ["Sem escala"]
-        else:
-            nomes = sorted(sub["nome"].dropna().unique())
-
-        with cols[idx % 2]:
+        for data in datas:
+            grupo = df_f[df_f["data"] == data]
 
             st.markdown(f"""
-            <div class="card">
-
-            <div class="ministerio">
-            {emoji} {ministerio}
+            <div class="data-box">
+              <h2 style="margin:0;">📆 {data.strftime('%d/%m/%Y')}</h2>
             </div>
             """, unsafe_allow_html=True)
 
-            for nome in nomes:
+            cols = st.columns(2)
+            i = 0
 
-                if nome == "Sem escala":
-                    st.markdown(
-                        f"<div class='nome' style='color:#F87171;'>• {nome}</div>",
-                        unsafe_allow_html=True
-                    )
+            for m in ordem:
+                sub = grupo[grupo["ministerio"] == m]
+
+                # sempre mostra o ministério (mesmo vazio)
+                if sub.empty:
+                    nomes = ["Sem escala"]
                 else:
+                    nomes = sorted(sub["nome"].dropna().unique())
+
+                with cols[i % 2]:
                     st.markdown(
-                        f"<div class='nome'>• {nome}</div>",
+                        f"<div class='card'><div class='ministerio'>{EMOJIS.get(m,'✨')} {m}</div>",
                         unsafe_allow_html=True
                     )
+                    for n in nomes:
+                        if n == "Sem escala":
+                            st.markdown(f"<div class='nome' style='color:#F87171;'>• {n}</div>", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"<div class='nome'>• {n}</div>", unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
 
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        idx += 1
+                i += 1
 
 # =========================================================
-# FILTROS
+# PAGINA: TABELA ORIGINAL
 # =========================================================
-st.divider()
-st.subheader("🔎 Filtros")
+elif pagina == "🗂️ Tabela Original":
 
-col1, col2, col3 = st.columns(3)
+    st.header("🗂️ Tabela Original (como na planilha)")
 
-with col1:
-    ano = st.selectbox(
-        "Ano",
-        ["Todos"] + sorted(df["ano"].unique().tolist())
+    raw_f = df_raw.copy()
+    raw_f["ano"] = raw_f["data"].dt.year
+    raw_f["mes"] = raw_f["data"].dt.month
+    raw_f = raw_f[raw_f["ano"] == ano]
+
+    if mes_num != 0:
+        raw_f = raw_f[raw_f["mes"] == mes_num]
+
+    if data_escolhida is not None:
+        raw_f = raw_f[raw_f["data"].dt.date == data_escolhida]
+
+    # filtro por nome no raw: procura em qualquer coluna de ministério
+    if nome:
+        cols_min = [c for c in raw_f.columns if c not in ["data", "ano", "mes"]]
+        mask = raw_f[cols_min].apply(lambda col: col.astype(str).str.contains(nome, case=False, na=False))
+        raw_f = raw_f[mask.any(axis=1)]
+
+    cols_min = [c for c in df_raw.columns if c != "data"]
+    cols_min = ordenar_ministerios(cols_min)
+
+    exib = raw_f[["data"] + cols_min].copy()
+    exib["data"] = exib["data"].dt.strftime("%d/%m/%Y")
+    exib = exib.rename(columns={"data": "Data"})
+
+    st.dataframe(exib, use_container_width=True, hide_index=True)
+
+# =========================================================
+# PAGINA: PARTICIPAÇÕES
+# =========================================================
+else:
+
+    st.header("📊 Participações")
+
+    contagem = (
+        df_f.groupby("nome")
+        .size()
+        .reset_index(name="Quantidade")
+        .sort_values("Quantidade", ascending=False)
     )
 
-with col2:
-    mes = st.selectbox(
-        "Mês",
-        ["Todos"] + sorted(df["mes"].unique().tolist())
-    )
+    c1, c2 = st.columns([1, 2])
 
-with col3:
-    ministerio = st.selectbox(
-        "Ministério",
-        ["Todos"] + sorted(df["ministerio"].unique().tolist())
-    )
+    with c1:
+        st.dataframe(contagem, use_container_width=True, hide_index=True)
 
-nome = st.text_input("Buscar nome")
+    with c2:
+        if not contagem.empty:
+            st.bar_chart(data=contagem.set_index("nome"))
 
-# =========================================================
-# FILTRAR
-# =========================================================
-df_filtrado = df.copy()
+    if nome:
+        st.divider()
+        st.subheader(f"📆 Agenda de {nome}")
 
-if ano != "Todos":
-    df_filtrado = df_filtrado[df_filtrado["ano"] == ano]
+        agenda = df_long[
+            (df_long["ano"] == ano) &
+            (df_long["nome"].str.contains(nome, case=False, na=False))
+        ].sort_values("data")
 
-if mes != "Todos":
-    df_filtrado = df_filtrado[df_filtrado["mes"] == mes]
+        agenda_exib = agenda[["data", "nome", "ministerio"]].copy()
+        agenda_exib["data"] = agenda_exib["data"].dt.strftime("%d/%m/%Y")
+        agenda_exib.columns = ["Data", "Nome", "Ministério"]
 
-if ministerio != "Todos":
-    df_filtrado = df_filtrado[df_filtrado["ministerio"] == ministerio]
-
-if nome:
-    df_filtrado = df_filtrado[
-        df_filtrado["nome"].str.contains(nome, case=False, na=False)
-    ]
-
-# =========================================================
-# TABELA
-# =========================================================
-st.divider()
-st.subheader("📋 Escalas")
-
-df_exib = df_filtrado[["data", "nome", "ministerio"]].copy()
-
-df_exib["data"] = df_exib["data"].dt.strftime("%d/%m/%Y")
-
-df_exib.columns = ["Data", "Nome", "Ministério"]
-
-st.dataframe(
-    df_exib,
-    use_container_width=True,
-    hide_index=True
-)
-
-# =========================================================
-# CONTAGEM
-# =========================================================
-st.divider()
-st.subheader("📊 Participações")
-
-contagem = (
-    df_filtrado
-    .groupby("nome")
-    .size()
-    .reset_index(name="Quantidade")
-    .sort_values("Quantidade", ascending=False)
-)
-
-contagem.columns = ["Nome", "Quantidade"]
-
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.dataframe(
-        contagem,
-        use_container_width=True,
-        hide_index=True
-    )
-
-with col2:
-    if not contagem.empty:
-        st.bar_chart(
-            data=contagem,
-            x="Nome",
-            y="Quantidade"
-        )
-
-# =========================================================
-# AGENDA INDIVIDUAL
-# =========================================================
-if nome:
-
-    st.divider()
-    st.subheader(f"📆 Agenda de {nome}")
-
-    agenda = df[df["nome"].str.contains(nome, case=False, na=False)].sort_values("data")
-
-    agenda_exib = agenda[["data", "nome", "ministerio"]].copy()
-
-    agenda_exib["data"] = agenda_exib["data"].dt.strftime("%d/%m/%Y")
-
-    agenda_exib.columns = ["Data", "Nome", "Ministério"]
-
-    st.dataframe(
-        agenda_exib,
-        use_container_width=True,
-        hide_index=True
-    )
-    
+        st.dataframe(agenda_exib, use_container_width=True, hide_index=True)
