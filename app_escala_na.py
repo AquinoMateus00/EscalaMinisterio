@@ -1,17 +1,18 @@
 import pandas as pd
 import streamlit as st
 
-# ==========================================
+# =========================================================
 # CONFIG
-# ==========================================
+# =========================================================
 st.set_page_config(
     page_title="Escala de Ministérios",
+    page_icon="📅",
     layout="wide"
 )
 
-# ==========================================
+# =========================================================
 # CSS
-# ==========================================
+# =========================================================
 st.markdown("""
 <style>
 
@@ -24,137 +25,121 @@ st.markdown("""
 }
 
 .card {
-    background-color: #111827;
+    border: 1px solid #31333F;
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 15px;
+    background-color: #0E1117;
+}
+
+.ministerio {
+    font-size: 1.4rem;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.nome {
+    font-size: 1.05rem;
+    margin-left: 10px;
+    margin-bottom: 5px;
+}
+
+.data-box {
+    background: linear-gradient(90deg, #1f2937, #111827);
     padding: 20px;
     border-radius: 18px;
     margin-bottom: 20px;
     border: 1px solid #374151;
 }
 
-.ministerio {
-    font-size: 1.2rem;
-    font-weight: bold;
-    margin-top: 15px;
-    color: #60A5FA;
-}
-
-.nome {
-    margin-left: 10px;
-    font-size: 1rem;
-}
-
-.resumo-box {
-    background-color: #111827;
-    padding: 25px;
-    border-radius: 20px;
-    border: 1px solid #374151;
-    margin-bottom: 20px;
-}
-
 @media (max-width: 768px) {
 
     .block-container {
-        padding-left: 0.7rem;
-        padding-right: 0.7rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
     }
 
     h1 {
-        font-size: 1.5rem !important;
+        font-size: 1.6rem !important;
     }
 }
 
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# GOOGLE SHEETS CSV
-# ==========================================
+# =========================================================
+# CSV URL
+# =========================================================
 csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTtu-b1fJg3AaYjKpcmYvdB1AaZpWGTRPr76mBxyBczreE69_A_3_NLJ4OPuGMtefWyTzl56G0oklFo/pub?output=csv"
 
-# ==========================================
+# =========================================================
 # LOAD DATA
-# ==========================================
+# =========================================================
 @st.cache_data(ttl=300)
 def carregar_dados():
 
-    df = pd.read_csv(csv_url)
+    df = pd.read_csv(csv_url, header=1)
 
     df.columns = df.columns.str.strip()
 
-    # Converter Data
-    df["Data"] = pd.to_datetime(
-        df["Data"],
+    df.rename(columns={"Data": "data"}, inplace=True)
+
+    df["data"] = pd.to_datetime(
+        df["data"],
         dayfirst=True,
         errors="coerce"
     )
 
-    # Todas colunas exceto data
-    ministerios_cols = [
-        c for c in df.columns
-        if c != "Data"
-    ]
+    df = df.dropna(subset=["data"])
 
-    # TRANSFORMAR EM LONG FORMAT
+    ministerios_cols = [c for c in df.columns if c != "data"]
+
     melted = df.melt(
-        id_vars=["Data"],
+        id_vars=["data"],
         value_vars=ministerios_cols,
-        var_name="Ministerio",
-        value_name="Nome"
+        var_name="ministerio",
+        value_name="nome"
     )
 
-    # Remover vazios
-    melted = melted.dropna(subset=["Nome"])
+    melted = melted.dropna(subset=["nome"])
 
-    # Converter nomes
-    melted["Nome"] = melted["Nome"].astype(str)
+    melted["nome"] = melted["nome"].astype(str)
 
-    melted["Nome"] = melted["Nome"].str.replace(
+    melted["nome"] = melted["nome"].str.replace(
         r"\s+[eE]\s+",
         ",",
         regex=True
     )
 
-    melted["Nome"] = melted["Nome"].str.replace(
-        ";",
-        ",",
-        regex=False
-    )
+    melted["nome"] = melted["nome"].str.replace(";", ",", regex=False)
 
-    # SPLIT NOMES
-    melted["Nome"] = melted["Nome"].str.split(",")
+    melted["nome"] = melted["nome"].str.split(",")
+    melted = melted.explode("nome")
 
-    melted = melted.explode("Nome")
+    melted["nome"] = melted["nome"].str.strip()
+    melted = melted[melted["nome"] != ""]
+    melted["nome"] = melted["nome"].str.title()
 
-    melted["Nome"] = melted["Nome"].str.strip()
-
-    melted = melted[melted["Nome"] != ""]
-
-    # Padronizar
-    melted["Nome"] = melted["Nome"].str.title()
-
-    # Ano e mês
-    melted["Ano"] = melted["Data"].dt.year
-    melted["Mes"] = melted["Data"].dt.strftime("%m")
+    melted["ano"] = melted["data"].dt.year
+    melted["mes"] = melted["data"].dt.strftime("%m")
 
     return melted
 
 df = carregar_dados()
 
-# ==========================================
-# TITULO
-# ==========================================
+# =========================================================
+# TITLE
+# =========================================================
 st.title("📅 Escala de Ministérios")
 
-# ==========================================
+# =========================================================
 # PRÓXIMO GRUPO
-# ==========================================
+# =========================================================
 st.subheader("🔥 Próximo Grupo")
 
 hoje = pd.Timestamp.now().normalize()
 
-proximos = df[
-    df["Data"] >= hoje
-].sort_values("Data")
+proximos = df[df["data"] >= hoje].sort_values("data")
 
 if proximos.empty:
 
@@ -162,143 +147,135 @@ if proximos.empty:
 
 else:
 
-    proxima_data = proximos.iloc[0]["Data"]
+    proxima_data = proximos.iloc[0]["data"]
 
-    grupo = proximos[
-        proximos["Data"] == proxima_data
-    ]
-
-    data_formatada = proxima_data.strftime("%d/%m/%Y")
+    grupo = proximos[proximos["data"] == proxima_data]
 
     st.markdown(f"""
-    <div class="resumo-box">
-        <h2>📆 {data_formatada}</h2>
+    <div class="data-box">
+        <h2>📆 {proxima_data.strftime('%d/%m/%Y')}</h2>
     </div>
     """, unsafe_allow_html=True)
 
-    # EMOJIS POR MINISTÉRIO
     emojis = {
-        "Dança": "💃",
-        "Musica": "🎸",
-        "Música": "🎸",
-        "Pregação": "🔨",
-        "Pregador": "🔨",
-        "Comunicação": "📸",
+        "Animação": "🎵",
         "Condução": "🎤",
-        "Animação": "🎵"
+        "Dança": "💃",
+        "Pregação": "🔨",
+        "Comunicação": "📸",
+        "Música": "🎸"
     }
 
-    # AGRUPAR POR MINISTÉRIO
-    for ministerio, sub in grupo.groupby("Ministerio"):
+    ordem = [
+        "Animação",
+        "Condução",
+        "Dança",
+        "Pregação",
+        "Comunicação",
+        "Música"
+    ]
+
+    cols = st.columns(2)
+
+    idx = 0
+
+    for ministerio in ordem:
+
+        sub = grupo[grupo["ministerio"] == ministerio]
 
         emoji = emojis.get(ministerio, "✨")
 
-        nomes = sorted(
-            sub["Nome"].dropna().unique()
-        )
+        # 🔥 AQUI FOI O AJUSTE
+        if sub.empty:
+            nomes = ["Sem escala"]
+        else:
+            nomes = sorted(sub["nome"].dropna().unique())
 
-        html = f"""
-        <div class="card">
+        with cols[idx % 2]:
 
-        <div class="ministerio">
-        {emoji} {ministerio}
-        </div>
-        """
+            st.markdown(f"""
+            <div class="card">
 
-        for nome in nomes:
-            html += f"""
-            <div class="nome">
-            - {nome}
+            <div class="ministerio">
+            {emoji} {ministerio}
             </div>
-            """
+            """, unsafe_allow_html=True)
 
-        html += "</div>"
+            for nome in nomes:
 
-        st.markdown(html, unsafe_allow_html=True)
+                if nome == "Sem escala":
+                    st.markdown(
+                        f"<div class='nome' style='color:#F87171;'>• {nome}</div>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        f"<div class='nome'>• {nome}</div>",
+                        unsafe_allow_html=True
+                    )
 
-# ==========================================
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        idx += 1
+
+# =========================================================
 # FILTROS
-# ==========================================
+# =========================================================
 st.divider()
-
 st.subheader("🔎 Filtros")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
-
-    anos = ["Todos"] + sorted(
-        df["Ano"].dropna().unique().tolist()
-    )
-
     ano = st.selectbox(
         "Ano",
-        anos
+        ["Todos"] + sorted(df["ano"].unique().tolist())
     )
 
 with col2:
-
-    meses = ["Todos"] + sorted(
-        df["Mes"].dropna().unique().tolist()
-    )
-
     mes = st.selectbox(
         "Mês",
-        meses
+        ["Todos"] + sorted(df["mes"].unique().tolist())
     )
 
 with col3:
-
     ministerio = st.selectbox(
         "Ministério",
-        ["Todos"] + sorted(
-            df["Ministerio"].dropna().unique().tolist()
-        )
+        ["Todos"] + sorted(df["ministerio"].unique().tolist())
     )
 
-nome = st.text_input("🔎 Buscar nome")
+nome = st.text_input("Buscar nome")
 
-# ==========================================
+# =========================================================
 # FILTRAR
-# ==========================================
+# =========================================================
 df_filtrado = df.copy()
 
 if ano != "Todos":
-    df_filtrado = df_filtrado[
-        df_filtrado["Ano"] == ano
-    ]
+    df_filtrado = df_filtrado[df_filtrado["ano"] == ano]
 
 if mes != "Todos":
-    df_filtrado = df_filtrado[
-        df_filtrado["Mes"] == mes
-    ]
+    df_filtrado = df_filtrado[df_filtrado["mes"] == mes]
 
 if ministerio != "Todos":
-    df_filtrado = df_filtrado[
-        df_filtrado["Ministerio"] == ministerio
-    ]
+    df_filtrado = df_filtrado[df_filtrado["ministerio"] == ministerio]
 
 if nome:
     df_filtrado = df_filtrado[
-        df_filtrado["Nome"].str.contains(
-            nome,
-            case=False,
-            na=False
-        )
+        df_filtrado["nome"].str.contains(nome, case=False, na=False)
     ]
 
-# ==========================================
+# =========================================================
 # TABELA
-# ==========================================
+# =========================================================
 st.divider()
-
 st.subheader("📋 Escalas")
 
-df_exib = df_filtrado[
-    ["Data", "Nome", "Ministerio"]
-].copy()
+df_exib = df_filtrado[["data", "nome", "ministerio"]].copy()
 
-df_exib["Data"] = df_exib["Data"].dt.strftime("%d/%m/%Y")
+df_exib["data"] = df_exib["data"].dt.strftime("%d/%m/%Y")
+
+df_exib.columns = ["Data", "Nome", "Ministério"]
 
 st.dataframe(
     df_exib,
@@ -306,59 +283,58 @@ st.dataframe(
     hide_index=True
 )
 
-# ==========================================
+# =========================================================
 # CONTAGEM
-# ==========================================
+# =========================================================
 st.divider()
-
-st.subheader("📊 Quantas vezes cada pessoa serviu")
+st.subheader("📊 Participações")
 
 contagem = (
     df_filtrado
-    .groupby("Nome")
+    .groupby("nome")
     .size()
     .reset_index(name="Quantidade")
     .sort_values("Quantidade", ascending=False)
 )
 
-st.dataframe(
-    contagem,
-    use_container_width=True,
-    hide_index=True
-)
+contagem.columns = ["Nome", "Quantidade"]
 
-# ==========================================
-# GRÁFICO
-# ==========================================
-if not contagem.empty:
+col1, col2 = st.columns([1, 2])
 
-    st.bar_chart(
-        data=contagem,
-        x="Nome",
-        y="Quantidade"
-    )
-
-# ==========================================
-# AGENDA INDIVIDUAL
-# ==========================================
-if nome:
-
-    st.divider()
-
-    st.subheader(f"📆 Agenda de {nome}")
-
-    agenda = df[
-        df["Nome"].str.contains(
-            nome,
-            case=False,
-            na=False
-        )
-    ].sort_values("Data")
-
-    agenda["Data"] = agenda["Data"].dt.strftime("%d/%m/%Y")
-
+with col1:
     st.dataframe(
-        agenda[["Data", "Nome", "Ministerio"]],
+        contagem,
         use_container_width=True,
         hide_index=True
     )
+
+with col2:
+    if not contagem.empty:
+        st.bar_chart(
+            data=contagem,
+            x="Nome",
+            y="Quantidade"
+        )
+
+# =========================================================
+# AGENDA INDIVIDUAL
+# =========================================================
+if nome:
+
+    st.divider()
+    st.subheader(f"📆 Agenda de {nome}")
+
+    agenda = df[df["nome"].str.contains(nome, case=False, na=False)].sort_values("data")
+
+    agenda_exib = agenda[["data", "nome", "ministerio"]].copy()
+
+    agenda_exib["data"] = agenda_exib["data"].dt.strftime("%d/%m/%Y")
+
+    agenda_exib.columns = ["Data", "Nome", "Ministério"]
+
+    st.dataframe(
+        agenda_exib,
+        use_container_width=True,
+        hide_index=True
+    )
+    
