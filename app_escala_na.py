@@ -189,14 +189,14 @@ if nome:
 # =========================================================
 # TITULO
 # =========================================================
-st.title("📅 Escala de Ministérios")
+st.title("📅 Escala de Ministérios - Nova Aliança")
 
 # =========================================================
 # PAGINA: ESCALA
 # =========================================================
 if pagina == "🔥 Escala":
 
-    st.header("🔥 Escala do Grupo")
+    st.header("🔥 Escala do Nova Aliança")
 
     tipo = st.selectbox(
         "Mostrar:",
